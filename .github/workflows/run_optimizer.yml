@@ -38,3 +38,32 @@ jobs:
       run: |
         echo "📄 Checking JSON output..."
         cat warehouse_route_summary.json || echo "⚠️ No output file found!"
+
+    - name: Upload to Google Drive (redundant safeguard like SI Live)
+      env:
+        GOOGLE_APPLICATION_CREDENTIALS: service_account.json
+      run: |
+        python - <<'EOF'
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaFileUpload
+        import json
+
+        creds = Credentials.from_service_account_file(
+            "service_account.json",
+            scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        service = build("drive", "v3", credentials=creds)
+
+        file_path = "warehouse_route_summary.json"
+        file_id = "1oaq5MPXTa73FpdxZihQfrLVSeRtyMtFq"  # <-- confirm matches script
+
+        try:
+            with open(file_path, "r") as f:
+                json.load(f)  # validate JSON
+            media = MediaFileUpload(file_path, mimetype="application/json")
+            updated = service.files().update(fileId=file_id, media_body=media).execute()
+            print("✅ File uploaded successfully:", updated.get("id"))
+        except Exception as e:
+            print("❌ Upload safeguard failed:", e)
+        EOF
