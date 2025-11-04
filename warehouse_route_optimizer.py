@@ -139,11 +139,24 @@ try:
     )
     drive_service = build("drive", "v3", credentials=creds)
 
-    # 🆔 Correct file ID for warehouse_project_data.json
+    # 🧩 DEBUG: List visible files to confirm Drive access
+    print("🔍 Listing files visible to service account...")
+    files_result = drive_service.files().list(pageSize=10, fields="files(id, name)").execute()
+    for f in files_result.get("files", []):
+        print(f"📁 {f['name']} (ID: {f['id']})")
+
+    # 🆔 Correct file ID for warehouse_route_summary.json
     FILE_ID = "1N9Qy2GuMHeeoIN1AQKmeqp84oJNGLil8"
 
-    media = MediaFileUpload(OUTPUT_JSON, mimetype="application/json")
+    # 🧩 DEBUG: Try to fetch metadata for that file specifically
+    print(f"🔎 Checking access to specific file ID: {FILE_ID}")
+    try:
+        meta = drive_service.files().get(fileId=FILE_ID, fields="id, name, mimeType").execute()
+        print(f"✅ File found: {meta['name']} ({meta['id']})")
+    except Exception as e_meta:
+        print(f"⚠️ Could not access file metadata: {e_meta}")
 
+    media = MediaFileUpload(OUTPUT_JSON, mimetype="application/json")
     updated_file = (
         drive_service.files()
         .update(fileId=FILE_ID, media_body=media)
