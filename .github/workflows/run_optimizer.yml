@@ -10,28 +10,31 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ Checkout your repository
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-      # 2️⃣ Set up Python environment
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.10'
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
-      # 3️⃣ Install required dependencies
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas numpy requests google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client ortools
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pandas numpy requests google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client ortools
 
-      # 4️⃣ Create service account credentials from GitHub Secret
-      - name: Create service account key file
-        run: |
-          echo "${{ secrets.WAREHOUSE_GDRIVE_KEY }}" > service_account.json
+    - name: Decode and create service account key file
+      shell: bash
+      run: |
+        echo "${{ secrets.WAREHOUSE_GDRIVE_KEY }}" | base64 -d > service_account.json
+        echo "✅ service_account.json created."
+        head -c 80 service_account.json || true  # sanity check preview
 
-      # 5️⃣ Run the optimizer script
-      - name: Run warehouse route optimizer
-        run: |
-          python warehouse_route_optimizer.py
+    - name: Run Warehouse Route Optimizer
+      run: |
+        python warehouse_route_optimizer.py
+
+    - name: Verify JSON output
+      run: |
+        echo "📄 Checking JSON output..."
+        cat warehouse_route_summary.json || echo "⚠️ No output file found!"
