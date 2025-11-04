@@ -145,8 +145,8 @@ try:
     for f in files_result.get("files", []):
         print(f"📁 {f['name']} (ID: {f['id']})")
 
-    # 🆔 Correct file ID for warehouse_route_summary.json
-    FILE_ID = "1N9Qy2GuMHeeoIN1AQKmeqp84oJNGLil8"
+    # 🆔 Updated file ID for warehouse_route_summary.json (now outside folder)
+    FILE_ID = "1oaq5MPXTa73FpdxZihQfrLVSeRtyMtFq"
 
     # 🧩 DEBUG: Try to fetch metadata for that file specifically
     print(f"🔎 Checking access to specific file ID: {FILE_ID}")
@@ -156,6 +156,7 @@ try:
     except Exception as e_meta:
         print(f"⚠️ Could not access file metadata: {e_meta}")
 
+    # Upload JSON update
     media = MediaFileUpload(OUTPUT_JSON, mimetype="application/json")
     updated_file = (
         drive_service.files()
