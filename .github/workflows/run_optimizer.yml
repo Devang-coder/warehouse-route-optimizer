@@ -37,9 +37,14 @@ jobs:
     - name: Verify JSON output
       run: |
         echo "📄 Checking JSON output..."
-        cat warehouse_route_summary.json || echo "⚠️ No output file found!"
+        if [ -f warehouse_route_summary.json ]; then
+          cat warehouse_route_summary.json
+        else
+          echo "⚠️ No output file found!"
+          exit 1
+        fi
 
-    - name: Upload to Google Drive (redundant safeguard like SI Live)
+    - name: Update JSON on Google Drive (safeguard sync)
       env:
         GOOGLE_APPLICATION_CREDENTIALS: service_account.json
       run: |
@@ -56,14 +61,18 @@ jobs:
         service = build("drive", "v3", credentials=creds)
 
         file_path = "warehouse_route_summary.json"
-        file_id = "1oaq5MPXTa73FpdxZihQfrLVSeRtyMtFq"  # <-- confirm matches script
+        file_id = "1oaq5MPXTa73FpdxZihQfrLVSeRtyMtFq"  # ✅ matches Python script
 
         try:
+            # Validate JSON
             with open(file_path, "r") as f:
-                json.load(f)  # validate JSON
-            media = MediaFileUpload(file_path, mimetype="application/json")
+                json.load(f)
+
+            media = MediaFileUpload(file_path, mimetype="application/json", resumable=True)
             updated = service.files().update(fileId=file_id, media_body=media).execute()
-            print("✅ File uploaded successfully:", updated.get("id"))
+            print("✅ File updated successfully on Drive:", updated.get("id"))
+        except json.JSONDecodeError:
+            print("❌ Invalid JSON — skipping upload.")
         except Exception as e:
-            print("❌ Upload safeguard failed:", e)
+            print("❌ Drive update safeguard failed:", e)
         EOF
