@@ -309,3 +309,196 @@ try:
 
 except Exception as e:
     print(f"Failed to enhance JSON: {e}")
+# === 10️⃣ ADVANCED INTELLIGENCE EXTENSIONS — APPEND ONLY ===
+print("Adding advanced intelligence extensions...")
+
+try:
+    import hashlib
+    from collections import Counter
+    from itertools import combinations
+    import io
+    from googleapiclient.http import MediaIoBaseDownload
+
+    # Reload enriched JSON
+    with open(OUTPUT_JSON, "r", encoding="utf-8") as f:
+        enriched_output = json.load(f)
+
+    # Helper for column detection
+    def safe_col(df, candidates):
+        for c in candidates:
+            if c in df.columns:
+                return c
+        return None
+
+    # === 10.1 Data Freshness Metadata ===
+    print("Computing data freshness from Drive...")
+    def drive_meta(fid):
+        try:
+            meta = drive.files().get(fileId=fid, fields="id,name,modifiedTime,size").execute()
+            return {
+                "id": meta.get("id"),
+                "name": meta.get("name"),
+                "modifiedTime": meta.get("modifiedTime"),
+                "size_bytes": int(meta.get("size")) if meta.get("size") else None,
+            }
+        except Exception:
+            return {"id": fid, "modifiedTime": None, "reachable": False}
+
+    data_freshness = {
+        "picking_wave": drive_meta(PICKING_WAVE_URL.split("id=")[-1]),
+        "product": drive_meta(PRODUCT_URL.split("id=")[-1]),
+        "storage": drive_meta(STORAGE_URL.split("id=")[-1]),
+        "support": drive_meta(SUPPORT_URL.split("id=")[-1]),
+        "output_json": drive_meta(RESULT_JSON_FILE_ID),
+    }
+
+    enriched_output["data_freshness"] = data_freshness
+
+    # === 10.2 Schema Fingerprints + Drift ===
+    print("Calculating schema drift fingerprints...")
+    def fingerprint(df):
+        if df.empty:
+            return {"columns": [], "hash": None}
+        combo = "|".join([f"{c}:{str(df[c].dtype)}" for c in df.columns])
+        return {"columns": list(df.columns), "hash": hashlib.md5(combo.encode()).hexdigest()}
+
+    schema_block = {
+        "picking_wave": fingerprint(picking_df),
+        "product": fingerprint(product_df),
+        "storage": fingerprint(storage_df),
+        "support": fingerprint(support_df),
+    }
+
+    # Load previous schema from Drive
+    prev_schema = {}
+    try:
+        prev_buf = io.BytesIO()
+        downloader = MediaIoBaseDownload(prev_buf, drive.files().get_media(fileId=RESULT_JSON_FILE_ID))
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        prev_buf.seek(0)
+        prev_json = json.loads(prev_buf.read().decode("utf-8"))
+        prev_schema = prev_json.get("schema_fingerprint", {})
+    except Exception:
+        pass
+
+    def schema_changed(cur, prev):
+        return prev and cur.get("hash") != prev.get("hash")
+
+    schema_drift = {
+        "picking_wave_changed": schema_changed(schema_block["picking_wave"], prev_schema.get("picking_wave")),
+        "product_changed": schema_changed(schema_block["product"], prev_schema.get("product")),
+        "storage_changed": schema_changed(schema_block["storage"], prev_schema.get("storage")),
+        "support_changed": schema_changed(schema_block["support"], prev_schema.get("support")),
+    }
+
+    enriched_output["schema_fingerprint"] = schema_block
+    enriched_output["schema_drift"] = schema_drift
+
+    # === 10.3 Co-pick Associations (Apriori-lite) ===
+    print("Computing co-pick associations...")
+    wave_col = safe_col(picking_df, ["waveNumber", "WaveNumber", "WAVE", "wave_id"])
+    sku_col = safe_col(picking_df, ["SKU", "reference", "Item", "sku"])
+    rules = []
+
+    if not picking_df.empty and wave_col and sku_col:
+        baskets = (
+            picking_df[[wave_col, sku_col]]
+            .dropna()
+            .groupby(wave_col)[sku_col]
+            .apply(lambda s: set(s.astype(str)))
+        )
+        n = len(baskets)
+        item_ct, pair_ct = Counter(), Counter()
+        for items in baskets:
+            for a in items:
+                item_ct[a] += 1
+            for a, b in combinations(sorted(items), 2):
+                pair_ct[(a, b)] += 1
+
+        rules_tmp = []
+        for (a, b), cnt in pair_ct.items():
+            supp_ab = cnt / n
+            supp_a = item_ct[a] / n
+            supp_b = item_ct[b] / n
+            conf_a_b = cnt / item_ct[a]
+            lift = supp_ab / (supp_a * supp_b + 1e-9)
+            if cnt > 5 and conf_a_b > 0.05 and lift > 1.1:
+                rules_tmp.append({
+                    "antecedent": a,
+                    "consequent": b,
+                    "support": round(supp_ab, 3),
+                    "confidence": round(conf_a_b, 3),
+                    "lift": round(lift, 3),
+                    "count": cnt
+                })
+        rules = sorted(rules_tmp, key=lambda r: (r["lift"], r["count"]), reverse=True)[:50]
+
+    enriched_output["copick_rules"] = rules
+
+    # === 10.4 Slot Relocation Suggestions ===
+    print("Computing slotting move suggestions...")
+    x_col = safe_col(storage_df, ["x", "X"])
+    y_col = safe_col(storage_df, ["y", "Y"])
+    loc_col = safe_col(storage_df, ["location", "Location", "Loc"])
+    hot_skus = picking_df[sku_col].value_counts().head(20).index.tolist() if sku_col and not picking_df.empty else []
+    suggestions = []
+    if x_col and y_col and loc_col and len(storage_df) > 0:
+        centroid_x = storage_df[x_col].mean() if x_col else 0
+        centroid_y = storage_df[y_col].mean() if y_col else 0
+        storage_df["_dist"] = np.sqrt((storage_df[x_col] - centroid_x) ** 2 + (storage_df[y_col] - centroid_y) ** 2)
+        near_slots = storage_df.sort_values("_dist").head(50)
+        for i, sku in enumerate(hot_skus[:len(near_slots)]):
+            row = near_slots.iloc[i % len(near_slots)]
+            suggestions.append({
+                "sku": str(sku),
+                "recommended_location": str(row[loc_col]),
+                "reason": "High-frequency SKU – move closer to dispatch centroid"
+            })
+
+    enriched_output["slotting_recommendations"] = suggestions
+
+    # === 10.5 Automation Score & Triggers ===
+    print("Evaluating automation score...")
+    score = 0
+    if rules:
+        score += 30
+    if suggestions:
+        score += 30
+    if schema_drift and not any(schema_drift.values()):
+        score += 20
+    if data_freshness.get("output_json", {}).get("reachable", True):
+        score += 20
+
+    triggers = []
+    if any(schema_drift.values()):
+        triggers.append({
+            "type": "schema_drift",
+            "message": "Schema drift detected in latest dataset"
+        })
+    if score < 50:
+        triggers.append({
+            "type": "low_automation_value",
+            "message": "Automation value score below threshold; add richer data columns"
+        })
+
+    enriched_output["automation_intelligence"] = {
+        "automation_score": score,
+        "n8n_triggers": triggers,
+        "copick_rule_count": len(rules),
+        "slot_move_count": len(suggestions)
+    }
+
+    # === 10.6 Merge, Write, and Update ===
+    with open(OUTPUT_JSON, "w", encoding="utf-8") as f:
+        json.dump(enriched_output, f, indent=4, ensure_ascii=False)
+
+    media = MediaFileUpload(OUTPUT_JSON, mimetype="application/json", resumable=True)
+    drive.files().update(fileId=RESULT_JSON_FILE_ID, media_body=media).execute()
+    print("Advanced intelligence extensions successfully updated on Google Drive.")
+
+except Exception as e:
+    print(f"Failed to add advanced intelligence: {e}")
+
+# === END OF APPEND-ONLY ENHANCEMENTS ===
